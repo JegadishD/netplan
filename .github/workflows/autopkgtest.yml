@@ -3,6 +3,7 @@ name: Autopkgtest CI
 # Controls when the action will run. Triggers the workflow on push or pull request
 # events but only for the main branch
 on:
+  workflow_dispatch:
   push:
     branches: [ main ]
     paths-ignore:
@@ -44,14 +45,8 @@ jobs:
           autopkgtest-build-lxd ubuntu-daily:noble
       - name: Prepare test
         run: |
-          # Ugly workaround for the "cloud-init.sh" test while waiting for 1.1.2-8 in Ubuntu
-          dget -u "https://deb.debian.org/debian/pool/main/n/netplan.io/netplan.io_1.1.2-8.dsc"
-          cp -r netplan.io-*/debian deb-tmp
-          rm -rf netplan.io-*/
-
           pull-lp-source netplan.io
           cp -r netplan.io-*/debian .
-          mv deb-tmp/tests/cloud-init.sh debian/tests/cloud-init.sh
           rm -r debian/patches/  # clear any distro patches
           sed -i 's|systemd (>= 258~),|systemd (>= 248~),|g' debian/control  # see https://github.com/canonical/netplan/pull/535
           echo 'usr/libexec/netplan/configure' >> debian/netplan-generator.install
@@ -66,6 +61,13 @@ jobs:
           autopkgtest . -U \
             --env=DPKG_GENSYMBOLS_CHECK_LEVEL=0 \
             --env=NETPLAN_PARSER_IGNORE_ERRORS=1 \
+            --test-name=ethernets \
             --setup-commands='mkdir -p /etc/systemd/system/NetworkManager.service.d && echo "[Service]\nCapabilityBoundingSet=CAP_CHOWN\n" > /etc/systemd/system/NetworkManager.service.d/override.conf && systemctl daemon-reload' \
             -- lxd autopkgtest/ubuntu/noble/amd64 \
-            || test $? -eq 2  # allow wifi test to be skipped (exit code = 2)
+            || test $? -eq 2
+      - name: Setup tmate session for debugging
+        if: ${{ failure() }}
+        uses: mxschmitt/action-tmate@v3
+        timeout-minutes: 120
+        with:
+          limit-access-to-actor: true
