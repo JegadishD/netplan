@@ -3,6 +3,7 @@ name: Autopkgtest DebCI
 # Controls when the action will run. Triggers the workflow on push or pull request
 # events but only for the main branch
 on:
+  workflow_dispatch:
   push:
     branches: [ main, 'stable/**' ]
     paths-ignore:
@@ -14,7 +15,7 @@ on:
 
 # A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
-  lxc-debian-testing:
+  lxc-debian-stable:
     # The type of runner that the job will run on
     runs-on: ubuntu-24.04
 
@@ -42,7 +43,7 @@ jobs:
           sudo apparmor_parser -R /etc/apparmor.d/usr.bin.lxc-start
           sudo ln -s /etc/apparmor.d/usr.bin.lxc-start /etc/apparmor.d/disable/
           echo "lxc.apparmor.profile = unconfined" | sudo tee -a /etc/lxc/default.conf
-          sudo debci setup -s testing -a amd64 -b lxc
+          sudo debci setup -s trixie -a amd64 -b lxc
       - name: Prepare test
         run: |
           # pull-debian-source netplan.io  # snapshot.debian.org is not up-to-date
@@ -50,16 +51,26 @@ jobs:
           dget -u "https://deb.debian.org/debian/pool/main/n/netplan.io/netplan.io_$V.dsc"
           cp -r netplan.io-*/debian .
           rm -r debian/patches/  # clear any distro patches
+          sed -i 's|systemd (>= 258~),|systemd (>= 248~),|g' debian/control  # see https://github.com/canonical/netplan/pull/535
           echo 'usr/libexec/netplan/configure' >> debian/netplan-generator.install
           echo 'usr/lib/systemd/system/netplan-configure.service' >> debian/netplan-generator.install
           sed -i 's|libexec/netplan/generate|libexec/netplan/configure|g' debian/netplan-generator.postinst
           TAG=$(git describe --tags $(git rev-list --tags --max-count=1))  # find latest (stable) tag
           REV=$(git rev-parse --short HEAD)  # get current git revision
           VER="$TAG+git~$REV"
-          dch -v "$VER" "Autopkgtest CI testing (Debian testing)"
+          dch -v "$VER" "Autopkgtest CI testing (Debian trixie)"
       - name: Run autopkgtest (incl. build)
         run: |
           # using --setup-commands='apt -y install ...' temporarily to install
           # (test-/build-) deps until they become part of the packaging
           sudo autopkgtest . \
-            -U --env=DPKG_GENSYMBOLS_CHECK_LEVEL=0 -- lxc autopkgtest-testing-amd64 || test $? -eq 2  # allow OVS test to be skipped (exit code = 2)
+            -U --env=DPKG_GENSYMBOLS_CHECK_LEVEL=0 -- lxc autopkgtest-trixie-amd64 || test $? -eq 2  # allow OVS test to be skipped (exit code = 2)
+      # Provides an interactive SSH session to the runner when a previous step
+      # failed, so the failing testbed can be inspected. The job will pause here
+      # waiting for a connection (until it times out or 'continue' is touched).
+      - name: Debug via SSH on failure
+        if: ${{ failure() }}
+        uses: mxschmitt/action-tmate@v3
+        timeout-minutes: 60
+        with:
+          limit-access-to-actor: true
