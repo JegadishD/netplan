@@ -135,16 +135,22 @@ class NetplanTry(utils.NetplanCommand):
         self.configuration_changed = True
 
     def revert(self):  # pragma: nocover (requires user input)
-        # backup the state we just tried to apply
-        tempdir = tempfile.mkdtemp()
-        confdir = os.path.join(tempdir, 'etc', 'netplan')
-        os.makedirs(confdir)
-        self.config_manager.copy_tree('/etc/netplan', confdir, dirs_exist_ok=True)
-        # restore previous state
-        self.config_manager.revert()
-        NetplanApply().command_apply(run_generate=False, sync=True, exit_on_error=False, state_dir=tempdir)
-        # clear the backup
-        shutil.rmtree(tempdir)
+        tempdir = None
+        try:
+            # backup the state we just tried to apply
+            tempdir = tempfile.mkdtemp()
+            confdir = os.path.join(tempdir, 'etc', 'netplan')
+            os.makedirs(confdir)
+            self.config_manager.copy_tree('/etc/netplan', confdir, dirs_exist_ok=True)
+            # restore previous state
+            self.config_manager.revert()
+            NetplanApply().command_apply(run_generate=False, sync=True, exit_on_error=False, state_dir=tempdir)
+        except Exception as e:
+            logging.error("Revert failed with exception: %s", e)
+        finally:
+            # clear the backup
+            if tempdir:
+                shutil.rmtree(tempdir, ignore_errors=True)
 
     def cleanup(self):  # pragma: nocover (requires user input)
         self.config_manager.cleanup()
