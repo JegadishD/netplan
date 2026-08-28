@@ -38,6 +38,55 @@ class _CommonTests():
             f.write('''''')
         self.generate_and_settle([])
 
+    def test_commands_insufficient_privilege_lp2161924(self):
+        """LP#2161924: netplan commands should not trigger sys.excepthook
+        (which would cause apport crash reports) when run without privileges."""
+
+        # Create a temporary user for testing the scenario of a regular user (non-root)
+        # running netplan commands without sudo privileges.
+        # The intention is to check it does not lead to unhandled exceptions
+        # that generates an avoidable crash report (apport) on the system.
+        test_user = 'netplantest'
+        subprocess.run(['userdel', '-rf', test_user],
+                       stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+        subprocess.run(['useradd', '-m', '-s', '/bin/sh', test_user], check=True)
+        self.addCleanup(subprocess.run, ['userdel', '-rf', test_user],
+                        stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+
+        test_script_template = '''
+import sys
+excepthook_called = False
+def tracking_excepthook(exc_type, exc_value, exc_tb):
+    global excepthook_called
+    excepthook_called = True
+sys.excepthook = tracking_excepthook
+sys.argv = ['netplan', '{command}']
+try:
+    from netplan_cli.cli.core import Netplan
+    Netplan().main()
+except SystemExit:
+    pass
+sys.exit(1 if excepthook_called else 0)
+'''
+
+        env = os.environ.copy()
+        env['PYTHONPATH'] = '/usr/share/netplan'
+        for command in ['generate', 'apply', 'try']:
+            with self.subTest(command=command):
+                test_script = test_script_template.format(command=command)
+                result = subprocess.run(
+                    ['runuser', '-u', test_user, '--',
+                     'python3', '-c', test_script],
+                    capture_output=True,
+                    text=True,
+                    env=env
+                )
+                self.assertEqual(
+                    result.returncode, 0,
+                    f"netplan {command} resulted in an unhandled exception:\n"
+                    f"STDOUT: {result.stdout}\nSTDERR: {result.stderr}")
+                print(f"[DEBUG {command}] rc={result.returncode} stdout={result.stdout!r} stderr={result.stderr!r}")
+
 
 @unittest.skipIf("networkd" not in test_backends,
                  "skipping as networkd backend tests are disabled")
