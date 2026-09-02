@@ -51,39 +51,22 @@ class _CommonTests():
         self.addCleanup(subprocess.run, ['userdel', '-rf', test_user],
                         stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
 
-        test_script_template = '''
-import sys
-excepthook_called = False
-def tracking_excepthook(exc_type, exc_value, exc_tb):
-    global excepthook_called
-    excepthook_called = True
-sys.excepthook = tracking_excepthook
-sys.argv = ['netplan', '__COMMAND__']
-try:
-    from netplan_cli.cli.core import Netplan
-    Netplan().main()
-except SystemExit:
-    pass
-sys.exit(1 if excepthook_called else 0)
-'''
-
-        env = os.environ.copy()
-        env['PYTHONPATH'] = '/usr/share/netplan'
         for command in ['generate', 'apply', 'try']:
             with self.subTest(command=command):
-                test_script = test_script_template.replace('__COMMAND__', command)
                 result = subprocess.run(
                     ['runuser', '-u', test_user, '--',
-                     'python3', '-c', test_script],
+                     'netplan', command],
                     capture_output=True,
                     text=True,
-                    env=env,
                     timeout=30
                 )
-                self.assertEqual(
-                    result.returncode, 0,
-                    f"netplan {command} resulted in an unhandled exception:\n"
-                    f"STDOUT: {result.stdout}\nSTDERR: {result.stderr}")
+                # Check that no Python traceback was printed to stderr
+                # (tracebacks indicate unhandled exceptions that trigger apport)
+                self.assertNotIn(
+                    'Traceback (most recent call last):',
+                    result.stderr,
+                    f"netplan {command} produced a traceback (unhandled exception):\n"
+                    f"STDERR: {result.stderr}")
 
 
 @unittest.skipIf("networkd" not in test_backends,
